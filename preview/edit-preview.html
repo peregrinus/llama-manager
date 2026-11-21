@@ -1,0 +1,158 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edit commands — Llama Server Manager</title>
+<style>
+  :root {
+    --bg: #0e1116; --card: #161b23; --border: #262d3a;
+    --text: #e6e9ef; --muted: #8b93a3; --accent: #4f8cff;
+    --green: #2dd4a7; --red: #f0564f; --chip: #202734;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; justify-content: space-between;
+           padding: 16px 28px; border-bottom: 1px solid var(--border);
+           position: sticky; top: 0; background: var(--bg); z-index: 5; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header h1 span { color: var(--accent); }
+  nav a { color: var(--muted); text-decoration: none; font-size: 14px;
+          padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; }
+  nav a:hover { color: var(--text); border-color: var(--accent); }
+  main { padding: 28px; max-width: 1200px; margin: 0 auto; }
+  button { font: inherit; font-size: 13px; font-weight: 600; border-radius: 8px;
+           border: 1px solid var(--border); background: var(--chip);
+           color: var(--text); padding: 8px 14px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.run  { background: rgba(45,212,167,.15); border-color: rgba(45,212,167,.5); color: var(--green); }
+  button.stop { background: rgba(240,86,79,.12);  border-color: rgba(240,86,79,.5);  color: var(--red); }
+  button.ghost { background: transparent; font-weight: 400; color: var(--muted); }
+  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+           padding: 20px; margin-bottom: 18px; }
+  .panel h2 { margin: 0 0 14px; font-size: 15px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  input[type=text] { width: 100%; margin-top: 5px; background: var(--chip); color: var(--text);
+                     border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px;
+                     font-family: var(--mono); font-size: 13px; }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  .hint { font-size: 12px; color: var(--muted); margin: -6px 0 12px; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text);
+           margin-bottom: 14px; }
+  .row { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+  .msg { font-size: 13px; color: var(--green); }
+  .mid { color: var(--muted); font-size: 11px; font-family: var(--mono); font-weight: 400; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>&#9670;</span> Llama Server Manager</h1>
+  <nav><a href="/">Back to models</a></nav>
+</header>
+<main>
+  <section class="panel">
+    <h2>New model</h2>
+    <form id="newForm">
+      <label>Name
+        <input type="text" id="newName" placeholder="Llama 3 8B" required>
+      </label>
+      <label>Full command
+        <input type="text" id="newCmd" placeholder="/opt/llama/llama-server -m /models/llama-3-8b.gguf -c 4096 -p 8080" required>
+      </label>
+      <div class="hint">Include the full path to the llama-server binary — it is stored and executed exactly as written.</div>
+      <label class="check"><input type="checkbox" id="newBoot"> Run at boot</label>
+      <button type="submit" class="run">Add model</button>
+    </form>
+  </section>
+  <section id="list"></section>
+</main>
+<script>
+const list = document.getElementById("list");
+
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                  .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function render(models) {
+  list.innerHTML = "";
+  if (!models.length) {
+    list.innerHTML = '<div class="panel" style="color:var(--muted);font-size:14px">No models defined yet.</div>';
+    return;
+  }
+  for (const m of models) {
+    const card = document.createElement("div");
+    card.className = "panel";
+    card.innerHTML =
+      '<h2>' + esc(m.name) + ' <span class="mid">' + m.id + "</span></h2>" +
+      '<form class="edit-form">' +
+        '<label>Name <input type="text" class="f-name" value="' + esc(m.name) + '"></label>' +
+        '<label>Full command <input type="text" class="f-cmd" value="' + esc(m.command) + '"></label>' +
+        '<label class="check"><input type="checkbox" class="f-boot"' +
+          (m.run_on_boot ? " checked" : "") + '> Run at boot</label>' +
+        '<div class="row">' +
+          '<button type="submit">Save</button>' +
+          '<button type="button" class="stop del">Delete</button>' +
+          '<span class="msg"></span>' +
+        "</div>" +
+      "</form>";
+    const form = card.querySelector("form");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const r = await fetch("/api/models/" + m.id, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.querySelector(".f-name").value,
+          command: form.querySelector(".f-cmd").value,
+          run_on_boot: form.querySelector(".f-boot").checked
+        })
+      });
+      const msg = form.querySelector(".msg");
+      msg.textContent = r.ok ? "Saved" : "Error: " + ((await r.json()).error || r.status);
+      setTimeout(refresh, 400);
+    });
+    card.querySelector(".del").addEventListener("click", async () => {
+      if (!confirm("Delete '" + m.name + "'?")) return;
+      await fetch("/api/models/" + m.id, { method: "DELETE" });
+      refresh();
+    });
+    list.appendChild(card);
+  }
+}
+
+document.getElementById("newForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const r = await fetch("/api/models", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: document.getElementById("newName").value,
+      command: document.getElementById("newCmd").value,
+      run_on_boot: document.getElementById("newBoot").checked
+    })
+  });
+  if (r.ok) e.target.reset();
+  refresh();
+});
+
+async function refresh() {
+  const r = await fetch("/api/models");
+  render(await r.json());
+}
+
+// ---- preview: mock data instead of the API ----
+refresh = function () {
+  render([
+    { id: "a1b2c3d4", name: "Llama 3 8B Instruct", run_on_boot: true,
+      command: "/opt/llama/llama-server -m /models/llama-3-8b-instruct.Q4_K_M.gguf -c 8192 -p 8080 -ngl 99" },
+    { id: "e5f6a7b8", name: "Mistral 7B", run_on_boot: false,
+      command: "/opt/llama/llama-server -m /models/mistral-7b-instruct.v0.3.Q5_K_S.gguf -c 4096 -p 8081 --alias mistral" }
+  ]);
+};
+refresh();
+</script>
+</body>
+</html>

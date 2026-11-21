@@ -1,0 +1,231 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Llama Server Manager</title>
+<style>
+  :root {
+    --bg: #0e1116; --card: #161b23; --border: #262d3a;
+    --text: #e6e9ef; --muted: #8b93a3; --accent: #4f8cff;
+    --green: #2dd4a7; --red: #f0564f; --chip: #202734;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; justify-content: space-between;
+           padding: 16px 28px; border-bottom: 1px solid var(--border);
+           position: sticky; top: 0; background: var(--bg); z-index: 5; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header h1 span { color: var(--accent); }
+  nav a { color: var(--muted); text-decoration: none; font-size: 14px;
+          padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; }
+  nav a + a { margin-left: 8px; }
+  nav a:hover { color: var(--text); border-color: var(--accent); }
+  main { padding: 28px; max-width: 1200px; margin: 0 auto; }
+  button { font: inherit; font-size: 13px; font-weight: 600; border-radius: 8px;
+           border: 1px solid var(--border); background: var(--chip);
+           color: var(--text); padding: 8px 14px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.run  { background: rgba(45,212,167,.15); border-color: rgba(45,212,167,.5); color: var(--green); }
+  button.stop { background: rgba(240,86,79,.12);  border-color: rgba(240,86,79,.5);  color: var(--red); }
+  button.ghost { background: transparent; font-weight: 400; color: var(--muted); }
+  .vram { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+          padding: 12px 18px; margin-bottom: 18px; }
+  .vram-title { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 8px; }
+  .vram-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .vram-row:last-child { margin-bottom: 0; }
+  .vram-name { font-size: 12px; flex: 1; min-width: 0; overflow: hidden;
+               text-overflow: ellipsis; white-space: nowrap; }
+  .vram-bar { flex: 2; min-width: 100px; height: 8px; border-radius: 4px;
+              background: var(--chip); position: relative; overflow: hidden; }
+  .vram-fill { height: 100%; border-radius: 4px; background: var(--accent); transition: width .3s; }
+  .vram-fill.warn { background: var(--red); }
+  .vram-info { font-size: 11px; color: var(--muted); font-family: var(--mono); white-space: nowrap; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 18px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+          padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+  .card:hover { border-color: #33405a; }
+  .card-top { display: flex; align-items: center; gap: 10px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.on { background: var(--green); box-shadow: 0 0 8px rgba(45,212,167,.6); }
+  .card-name { font-size: 15px; font-weight: 600; flex: 1; }
+  .badge { font-size: 11px; color: var(--accent); border: 1px solid rgba(79,140,255,.4);
+           border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+  .cmd { display: flex; flex-wrap: wrap; gap: 6px; font-family: var(--mono); font-size: 12px; }
+  .chip { background: var(--chip); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+  .chip.bin { background: rgba(79,140,255,.12); border-color: rgba(79,140,255,.45); color: #9cc0ff; }
+  .card-bottom { display: flex; align-items: center; gap: 10px; margin-top: auto; }
+  .pid { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-left: auto; }
+  .empty { color: var(--muted); text-align: center; padding: 60px 0; font-size: 14px; }
+  .empty a { color: var(--accent); }
+  dialog { background: var(--card); color: var(--text); border: 1px solid var(--border);
+           border-radius: 12px; width: min(860px, 92vw); padding: 0; }
+  dialog::backdrop { background: rgba(0,0,0,.55); }
+  .modal-head { display: flex; justify-content: space-between; align-items: center;
+                padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .modal-head h3 { margin: 0; font-size: 14px; }
+  pre { margin: 0; padding: 16px 18px; max-height: 55vh; overflow: auto;
+        font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>&#9670;</span> Llama Server Manager</h1>
+  <nav><a href="/edit">Edit commands</a><a href="/logout">Logout</a></nav>
+</header>
+<main>
+  <div id="vram" class="vram">
+    <div class="vram-title">VRAM</div>
+    <div id="vram-devices"></div>
+  </div>
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty" hidden>No models yet. <a href="/edit">Add one</a>.</div>
+</main>
+<dialog id="logModal">
+  <div class="modal-head">
+    <h3 id="logTitle">Log</h3>
+    <button class="ghost" onclick="document.getElementById('logModal').close()">Close</button>
+  </div>
+  <pre id="logBody"></pre>
+</dialog>
+<script>
+const grid = document.getElementById("grid");
+const empty = document.getElementById("empty");
+const logModal = document.getElementById("logModal");
+const vramEl = document.getElementById("vram");
+const vramDiv = document.getElementById("vram-devices");
+
+function tokenize(cmd) {
+  const tokens = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m;
+  while ((m = re.exec(cmd)) !== null) {
+    tokens.push(m[1] !== undefined ? m[1] : (m[2] !== undefined ? m[2] : m[3]));
+  }
+  return tokens;
+}
+
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                  .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function render(models) {
+  grid.innerHTML = "";
+  empty.hidden = models.length > 0;
+  for (const m of models) {
+    const tokens = tokenize(m.command);
+    const chips = [];
+    if (tokens.length) chips.push('<span class="chip bin">' + esc(tokens[0]) + "</span>");
+    for (let i = 1; i < tokens.length; i++) {
+      const t = tokens[i];
+      if (t.startsWith("-") && i + 1 < tokens.length && !tokens[i + 1].startsWith("-")) {
+        chips.push('<span class="chip">' + esc(t + " " + tokens[i + 1]) + "</span>");
+        i++;
+      } else {
+        chips.push('<span class="chip">' + esc(t) + "</span>");
+      }
+    }
+    const running = m.status && m.status.running;
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      '<div class="card-top">' +
+        '<span class="dot' + (running ? " on" : "") + '"></span>' +
+        '<span class="card-name">' + esc(m.name) + "</span>" +
+        (m.run_on_boot ? '<span class="badge">run at boot</span>' : "") +
+      "</div>" +
+      '<div class="cmd">' + chips.join("") + "</div>" +
+      '<div class="card-bottom">' +
+        (running
+          ? '<button class="stop" data-act="stop">&#9632; Stop</button>'
+          : '<button class="run" data-act="run">&#9654; Run</button>') +
+        '<button class="ghost" data-act="log">log</button>' +
+        '<span class="pid">' + (running ? "pid " + m.status.pid : "stopped") + "</span>" +
+      "</div>";
+    const runBtn = card.querySelector('[data-act="run"]');
+    if (runBtn) runBtn.addEventListener("click", () => act(m.id, "run"));
+    const stopBtn = card.querySelector('[data-act="stop"]');
+    if (stopBtn) stopBtn.addEventListener("click", () => act(m.id, "stop"));
+    card.querySelector('[data-act="log"]').addEventListener("click", () => showLog(m));
+    grid.appendChild(card);
+  }
+}
+
+async function act(id, action) {
+  await fetch("/api/models/" + id + "/" + action, { method: "POST" });
+  refresh();
+}
+
+async function showLog(m) {
+  const r = await fetch("/api/models/" + m.id + "/log");
+  const d = await r.json();
+  document.getElementById("logTitle").textContent = m.name + " — log";
+  document.getElementById("logBody").textContent = d.log || "(no output yet)";
+  logModal.showModal();
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/models");
+    if (r.status === 401) { window.location.href = "/login"; return; }
+    render(await r.json());
+  } catch (e) { /* server briefly unavailable; retry next tick */ }
+}
+
+async function refreshVram() {
+  try {
+    const r = await fetch("/api/vram");
+    const d = await r.json();
+    if (!d.devices || !d.devices.length) {
+      vramEl.style.display = "none";
+      return;
+    }
+    vramEl.style.display = "";
+    vramDiv.innerHTML = d.devices.map(dev => {
+      const pct = dev.used_pct || 0;
+      const cls = pct > 90 ? "vram-fill warn" : "vram-fill";
+      return '<div class="vram-row">' +
+        '<span class="vram-name" title="' + esc(dev.name) + '">' + esc(dev.name) + '</span>' +
+        '<div class="vram-bar"><div class="' + cls + '" style="width:' + pct + '%"></div></div>' +
+        '<span class="vram-info">' + dev.free + '/' + dev.total + ' MiB</span>' +
+        '</div>';
+    }).join("");
+  } catch (e) { /* ignore */ }
+}
+
+// ---- preview: mock data ----
+refresh = function () {
+  render([
+    { id: "a1b2c3d4", name: "Llama 3 8B Instruct", run_on_boot: true,
+      command: "/opt/llama/llama-server -m /models/llama-3-8b-instruct.Q4_K_M.gguf -c 8192 -p 8080 -ngl 99",
+      status: { running: true, pid: 48211 } },
+    { id: "e5f6a7b8", name: "Mistral 7B", run_on_boot: false,
+      command: "/opt/llama/llama-server -m /models/mistral-7b-instruct.v0.3.Q5_K_S.gguf -c 4096 -p 8081 --alias mistral",
+      status: { running: false, pid: null } },
+    { id: "c9d0e1f2", name: "Gemma 2 2B (chat)", run_on_boot: false,
+      command: "/opt/llama/llama-server -m /models/gemma-2-2b-it.Q8_0.gguf -c 4096 -p 8082 -sp 0",
+      status: { running: false, pid: null } }
+  ]);
+};
+refreshVram = function () {
+  vramEl.style.display = "";
+  vramDiv.innerHTML = [
+    { name: "Intel(R) Graphics (BMG G31)", total: 32656, free: 3012, used_pct: 91 },
+    { name: "AMD Radeon 890M (RADV STRIX1)", total: 24429, free: 24207, used_pct: 1 }
+  ].map(dev => {
+    const pct = dev.used_pct || 0;
+    const cls = pct > 90 ? "vram-fill warn" : "vram-fill";
+    return '<div class="vram-row">' +
+      '<span class="vram-name" title="' + esc(dev.name) + '">' + esc(dev.name) + '</span>' +
+      '<div class="vram-bar"><div class="' + cls + '" style="width:' + pct + '%"></div></div>' +
+      '<span class="vram-info">' + dev.free + '/' + dev.total + ' MiB</span>' +
+      '</div>';
+  }).join("");
+};
+refreshVram();
+</script>
+</body>
+</html>

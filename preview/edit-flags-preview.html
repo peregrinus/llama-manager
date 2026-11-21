@@ -1,0 +1,238 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edit commands — Llama Server Manager</title>
+<style>
+  :root {
+    --bg: #0e1116; --card: #161b23; --border: #262d3a;
+    --text: #e6e9ef; --muted: #8b93a3; --accent: #4f8cff;
+    --green: #2dd4a7; --red: #f0564f; --chip: #202734;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; justify-content: space-between;
+           padding: 16px 28px; border-bottom: 1px solid var(--border);
+           position: sticky; top: 0; background: var(--bg); z-index: 5; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header h1 span { color: var(--accent); }
+  nav a { color: var(--muted); text-decoration: none; font-size: 14px;
+          padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; }
+  nav a + a { margin-left: 8px; }
+  nav a:hover { color: var(--text); border-color: var(--accent); }
+  main { padding: 28px; max-width: 1200px; margin: 0 auto; }
+  button { font: inherit; font-size: 13px; font-weight: 600; border-radius: 8px;
+           border: 1px solid var(--border); background: var(--chip);
+           color: var(--text); padding: 8px 14px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.run  { background: rgba(45,212,167,.15); border-color: rgba(45,212,167,.5); color: var(--green); }
+  button.stop { background: rgba(240,86,79,.12);  border-color: rgba(240,86,79,.5);  color: var(--red); }
+  button.ghost { background: transparent; font-weight: 400; color: var(--muted); }
+  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+           padding: 20px; margin-bottom: 18px; }
+  .panel h2 { margin: 0 0 14px; font-size: 15px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  input[type=text] { width: 100%; margin-top: 5px; background: var(--chip); color: var(--text);
+                     border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px;
+                     font-family: var(--mono); font-size: 13px; }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  .hint { font-size: 12px; color: var(--muted); margin: -6px 0 12px; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text);
+           margin-bottom: 14px; }
+  .row { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+  .msg { font-size: 13px; color: var(--green); }
+  .mid { color: var(--muted); font-size: 11px; font-family: var(--mono); font-weight: 400; }
+  .flags-header { font-size: 12px; font-weight: 600; color: var(--muted); margin: 14px 0 8px;
+                  text-transform: uppercase; letter-spacing: .5px; }
+  .flag-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .flag-row input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); flex: none; }
+  .flag-name { font-family: var(--mono); font-size: 12px; color: var(--accent); min-width: 50px; flex: none; }
+  .flag-val { flex: 1; background: var(--chip); border: 1px solid var(--border); border-radius: 6px;
+              padding: 6px 10px; color: var(--text); font-family: var(--mono); font-size: 12px; }
+  .flag-val:focus { outline: none; border-color: var(--accent); }
+  .flag-val:disabled { opacity: .4; }
+  .positional { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .cmd-wrap { position: relative; }
+  .cmd-wrap label { margin-bottom: 4px; }
+  .cmd-wrap input { font-family: var(--mono); font-size: 12px; }
+  .binary-wrap { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .binary-wrap label { margin-bottom: 0; flex: 1; }
+  .binary-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>&#9670;</span> Llama Server Manager</h1>
+  <nav><a href="/">Back to models</a><a href="/logout">Logout</a></nav>
+</header>
+<main>
+  <section class="panel">
+    <h2>New model</h2>
+    <form>
+      <label>Name
+        <input type="text" placeholder="Llama 3 8B" required>
+      </label>
+      <label>Full command
+        <input type="text" placeholder="/opt/llama/llama-server -m /models/llama-3-8b.gguf -c 4096 -p 8080" required>
+      </label>
+      <div class="hint">Paste or type the full command. Click "Add model" and the switches will be parsed for editing.</div>
+      <label class="check"><input type="checkbox"> Run at boot</label>
+      <button type="button" class="run">Add model</button>
+    </form>
+  </section>
+  <section id="list"></section>
+</main>
+<script>
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                  .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function tokenize(cmd) {
+  const tokens = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m;
+  while ((m = re.exec(cmd)) !== null) {
+    tokens.push(m[1] !== undefined ? m[1] : (m[2] !== undefined ? m[2] : m[3]));
+  }
+  return tokens;
+}
+
+function parseCommand(cmd) {
+  const tokens = tokenize(cmd);
+  if (!tokens.length) return { binary: "", flags: [], positional: [] };
+  const binary = tokens[0];
+  const flags = [];
+  const positional = [];
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.startsWith("-")) {
+      if (i + 1 < tokens.length && !tokens[i + 1].startsWith("-")) {
+        flags.push({ name: token, value: tokens[i + 1], enabled: true });
+        i++;
+      } else {
+        flags.push({ name: token, value: "", enabled: true });
+      }
+    } else {
+      positional.push(token);
+    }
+  }
+  return { binary, flags, positional };
+}
+
+function reconstructCommand(binary, flags, positional) {
+  const parts = [binary];
+  for (const flag of flags) {
+    if (flag.enabled) {
+      parts.push(flag.name);
+      if (flag.value) parts.push(flag.value);
+    }
+  }
+  parts.push(...positional);
+  return parts.join(" ");
+}
+
+function renderFlagEditor(form, parsed) {
+  const binaryInput = form.querySelector(".f-binary");
+  const cmdInput = form.querySelector(".f-cmd");
+  const flagsContainer = form.querySelector(".flags-container");
+  const posContainer = form.querySelector(".positional-container");
+
+  function renderFlags() {
+    let html = "";
+    for (let i = 0; i < parsed.flags.length; i++) {
+      const f = parsed.flags[i];
+      html += '<div class="flag-row">' +
+        '<input type="checkbox" class="f-flag-en" data-idx="' + i + '"' +
+          (f.enabled ? " checked" : "") + '>' +
+        '<span class="flag-name">' + esc(f.name) + '</span>' +
+        '<input type="text" class="f-flag-val" data-idx="' + i + '"' +
+          ' value="' + esc(f.value) + '"' +
+          (f.enabled ? "" : " disabled") + '>' +
+        '</div>';
+    }
+    flagsContainer.innerHTML = html || '<div style="color:var(--muted);font-size:12px">No flags detected</div>';
+  }
+
+  function updateCmd() {
+    cmdInput.value = reconstructCommand(binaryInput.value, parsed.flags, parsed.positional);
+  }
+
+  flagsContainer.addEventListener("change", (e) => {
+    if (e.target.classList.contains("f-flag-en")) {
+      const idx = parseInt(e.target.dataset.idx);
+      parsed.flags[idx].enabled = e.target.checked;
+      const valInput = form.querySelector('.f-flag-val[data-idx="' + idx + '"]');
+      if (valInput) valInput.disabled = !e.target.checked;
+      updateCmd();
+    }
+  });
+
+  flagsContainer.addEventListener("input", (e) => {
+    if (e.target.classList.contains("f-flag-val")) {
+      const idx = parseInt(e.target.dataset.idx);
+      parsed.flags[idx].value = e.target.value;
+      updateCmd();
+    }
+  });
+
+  binaryInput.addEventListener("input", () => {
+    updateCmd();
+  });
+
+  cmdInput.addEventListener("input", () => {
+    const reParsed = parseCommand(cmdInput.value);
+    parsed.binary = reParsed.binary;
+    parsed.flags = reParsed.flags;
+    parsed.positional = reParsed.positional;
+    if (binaryInput) binaryInput.value = reParsed.binary;
+    renderFlags();
+  });
+
+  renderFlags();
+}
+
+const list = document.getElementById("list");
+const models = [
+  { id: "a1b2c3d4", name: "Llama 3 8B Instruct", run_on_boot: true,
+    command: "/opt/llama/llama-server -m /models/llama-3-8b-instruct.Q4_K_M.gguf -c 8192 -p 8080 -ngl 99 --alias llama3" },
+  { id: "e5f6a7b8", name: "Mistral 7B", run_on_boot: false,
+    command: "/opt/llama/llama-server -m /models/mistral-7b-instruct.v0.3.Q5_K_S.gguf -c 4096 -p 8081" }
+];
+
+for (const m of models) {
+  const parsed = parseCommand(m.command);
+  const card = document.createElement("div");
+  card.className = "panel";
+  card.innerHTML =
+    '<h2>' + esc(m.name) + ' <span class="mid">' + m.id + "</span></h2>" +
+    '<form class="edit-form">' +
+      '<label>Name <input type="text" class="f-name" value="' + esc(m.name) + '"></label>' +
+      '<div class="binary-wrap">' +
+        '<label class="binary-label">Binary</label>' +
+        '<input type="text" class="f-binary" value="' + esc(parsed.binary) + '">' +
+      '</div>' +
+      '<div class="flags-header">Parsed switches</div>' +
+      '<div class="flags-container"></div>' +
+      '<div class="positional-container"></div>' +
+      '<div class="cmd-wrap">' +
+        '<label>Full command (auto-updates from switches above)</label>' +
+        '<input type="text" class="f-cmd" value="' + esc(m.command) + '">' +
+      '</div>' +
+      '<label class="check"><input type="checkbox" class="f-boot"' +
+        (m.run_on_boot ? " checked" : "") + '> Run at boot</label>' +
+      '<div class="row">' +
+        '<button type="button">Save</button>' +
+        '<button type="button" class="stop del">Delete</button>' +
+        '<span class="msg"></span>' +
+      "</div>" +
+    "</form>";
+  renderFlagEditor(card.querySelector("form"), parsed);
+  list.appendChild(card);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+[Unit]
+Description=Llama Server Manager (web UI on port 6522)
+After=network.target
+
+[Service]
+Type=simple
+# Run as your normal user (the one that owns /opt/llama-manager and the models)
+User=nome
+WorkingDirectory=/opt/llama-manager
+ExecStart=/usr/bin/python3 /opt/llama-manager/app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
